@@ -1,0 +1,10 @@
+* 
+
+!**/*.go
+!**/*.md
+!*/
+!Makefile
+!.gitignore
+!.gitmodules
+
+*.pb.go

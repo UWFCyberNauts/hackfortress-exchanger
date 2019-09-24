@@ -1,0 +1,3 @@
+[submodule "hackfortress-grpc-protocol-spec"]
+	path = hackfortress-grpc-protocol-spec
+	url = https://github.com/UWFCybernauts/hackfortress-grpc-protocol-spec

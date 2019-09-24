@@ -14,6 +14,13 @@ compatible compile targets enforced by SourceMod/TF2. This method of implementat
 any exhcanger to be written in any higher level language that has a method of interfacing with 
 UNIX Domain Sockets. 
 
+### Build instructions
+This code requires the linux platform
+1) Install [gRPC](grpc.io)
+2) Issue the command `make` in the root of the repo and watch the magic happen
+
+the build binary is output to ./build/out/hackfortress-exchanger
+
 ### Authors
 This component of UWF Cyber Security Club's Hackfortress Implementation is created and maintained 
 by:
