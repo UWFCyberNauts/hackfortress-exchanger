@@ -8,7 +8,7 @@ import (
 	"net"
 	"os"
 
-	pb "github.com/AWildBeard/hackfortress-exchanger/build/exchange"
+	pb "github.com/UWFCybernauts/hackfortress-exchanger/build/exchange"
 	"google.golang.org/grpc"
 )
 
