@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"os/signal"
 
 	pb "github.com/UWFCybernauts/hackfortress-exchanger/build/exchange"
 	"google.golang.org/grpc"
@@ -51,27 +52,55 @@ func main() {
 
 	var (
 		unixConn     net.Conn
-		grpcClient   pb.ExchangeClient
 		unixListener net.Listener
+		grpcConn     *grpc.ClientConn
+		grpcClient   pb.ExchangeClient
+		exiting      = false
 
-		buf = make([]byte, 512)
+		buf          = make([]byte, 512)
+		interuptChan = make(chan os.Signal, 1)
+		signalExit   = make(chan bool, 1)
 	)
+
+	signal.Notify(interuptChan, os.Interrupt)
+
+	// We do this in a goroutine so we can end any waiting listeners in
+	// the runtime rather than hanging on them to time out.
+	go func() {
+		<-interuptChan
+		exiting = true
+		signalExit <- true
+
+		if unixConn != nil {
+			unixConn.Close()
+		}
+		if unixListener != nil {
+			unixListener.Close()
+		}
+		if grpcConn != nil {
+			grpcConn.Close()
+		}
+
+		os.Remove(socketPath)
+		ilog.Printf("Exiting...\n")
+		signalExit <- true
+	}()
 
 	// Just remove the old sock dude
 	os.Remove(socketPath)
 
 	if newListener, err := net.Listen("unix", socketPath); err == nil {
 		unixListener = newListener
-		ilog.Printf("Successfully created UNIX Domain Socket unixListener at %s\n", socketPath)
+		ilog.Printf("Successfully created UNIX Domain Socket Listener at %s\n", socketPath)
 	} else {
-		ilog.Printf("Failed to create UNIX Domain Socket unixListener at %s", socketPath)
+		ilog.Printf("Failed to create UNIX Domain Socket Listener at %s", socketPath)
 		elog.Printf(": %v", err)
 		ilog.Printf("\nExiting...\n")
 		os.Exit(exitFailure)
 	}
 
 	if newConn, err := grpc.Dial(gRPCServerAddress, grpc.WithInsecure()); err == nil {
-		defer newConn.Close()
+		grpcConn = newConn
 		grpcClient = pb.NewExchangeClient(newConn)
 		ilog.Printf("Successfully created gRPC Exchange grpcClient connection to %s\n", gRPCServerAddress)
 	} else {
@@ -81,12 +110,23 @@ func main() {
 		os.Exit(exitFailure)
 	}
 
-	for true {
+runtime:
+	for {
+		select {
+		case <-signalExit:
+			break runtime
+		default:
+		}
+
 		if unixConn != nil {
+			ilog.Printf("Closing UNIX Domain socket connection\n")
 			if err := unixConn.Close(); err != nil {
-				ilog.Printf("Failed to close UNIX Domain socket connection")
-				elog.Printf(": %v", err)
-				ilog.Printf("\n")
+				if !exiting {
+					ilog.Print("Failed to close UNIX Domain socket connection")
+					elog.Printf(": %v", err)
+					ilog.Printf("\n")
+				}
+				continue
 			}
 		}
 
@@ -95,15 +135,14 @@ func main() {
 			unixConn = newConn
 			ilog.Printf("Accepted UNIX Domain Socket Connection\n")
 		} else {
-			elog.Printf("Failed to accept unixConnection: %v", err)
+			if !exiting {
+				elog.Printf("Failed to accept Connection: %v", err)
+			}
 			continue
 		}
 
-		for nread, err := unixConn.Read(buf); err == nil; nread, err = unixConn.Read(buf) {
-			if nread == 0 {
-				break
-			}
-
+	readloop:
+		for nread, err := unixConn.Read(buf); err == nil && nread != 0; nread, err = unixConn.Read(buf) {
 			var command = string(buf)
 			clearBufN(&buf, nread)
 
@@ -119,37 +158,34 @@ func main() {
 						ilog.Printf("Failed to write scoring data to UNIX Domain Socket")
 						elog.Printf(": %v", err)
 						ilog.Printf("\n")
-						os.Exit(exitFailure)
+						break readloop
 					}
 					ilog.Printf("Wrote scoring data to UNIX Domain Socket\n")
 				} else {
-					ilog.Printf("Failed to get remote scoring data from gRPC server")
-					elog.Printf(": %v", err)
-					ilog.Printf("\n")
-					os.Exit(exitFailure)
+					if !exiting {
+						ilog.Printf("[CRITICAL] Failed to get remote scoring data from gRPC server")
+						elog.Printf(": %v", err)
+						ilog.Printf("\n")
+						os.Exit(exitFailure)
+					}
 				}
 
 			case "unregister":
-				ilog.Printf("UNIX Domain Socket Connection closing...\n")
-				break
+				break readloop
 
 			default:
 				ilog.Printf("Unknown Command: '%s'\n", command)
 				if _, err := unixConn.Write([]byte("unknown command")); err != nil {
 					ilog.Printf("Failed to write data to UNIX Domain Socket")
 					elog.Printf(": %v", err)
-					ilog.Printf("\nClosing Connection\n")
-					break
+					ilog.Printf("\n")
+					break readloop
 				}
 			}
 		}
 	}
-}
 
-func clearBuf(buf *[]byte) {
-	for i := range *buf {
-		(*buf)[i] = 0
-	}
+	<-signalExit
 }
 
 func clearBufN(buf *[]byte, n int) {
