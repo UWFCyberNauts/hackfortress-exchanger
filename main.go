@@ -93,21 +93,39 @@ func main() {
 		unixListener = newListener
 		ilog.Printf("Successfully created UNIX Domain Socket Listener at %s\n", socketPath)
 	} else {
-		ilog.Printf("Failed to create UNIX Domain Socket Listener at %s", socketPath)
+		ilog.Printf("[CRITICAL] Failed to create UNIX Domain Socket Listener at %s", socketPath)
 		elog.Printf(": %v", err)
 		ilog.Printf("\nExiting...\n")
-		os.Exit(exitFailure)
+		interuptChan <- os.Interrupt
 	}
 
 	if newConn, err := grpc.Dial(gRPCServerAddress, grpc.WithInsecure()); err == nil {
 		grpcConn = newConn
 		grpcClient = pb.NewExchangeClient(newConn)
-		ilog.Printf("Successfully created gRPC Exchange grpcClient connection to %s\n", gRPCServerAddress)
+		ilog.Printf("Successfully created gRPC Exchange Client\n")
+
+		var helloReq = pb.HelloRequest{}
+		helloReq.Hello = "connect"
+		if rsp, err := grpcClient.GRPCHello(context.Background(), &helloReq); err == nil {
+			if rsp.Hello == "connected" {
+				ilog.Printf("Successfully connected to gRPC Exchange Server at %s\n", gRPCServerAddress)
+			} else {
+				ilog.Printf("[CRITICAL] Got improper response from %s on gRPCHello", gRPCServerAddress)
+				elog.Printf(": %v", err)
+				ilog.Printf("\n")
+				interuptChan <- os.Interrupt
+			}
+		} else {
+			ilog.Printf("[CRITICAL] Failed to connect to gRPC Exchange Server at %s", gRPCServerAddress)
+			elog.Printf(": %v", err)
+			ilog.Printf("\n")
+			interuptChan <- os.Interrupt
+		}
 	} else {
-		ilog.Printf("Failed to create gRPC Exchange Client connection to %s", gRPCServerAddress)
+		ilog.Printf("[CRITICAL] Failed to create gRPC Exchange Client")
 		elog.Printf(": %v", err)
 		ilog.Printf("\n")
-		os.Exit(exitFailure)
+		interuptChan <- os.Interrupt
 	}
 
 runtime:
@@ -186,6 +204,7 @@ runtime:
 	}
 
 	<-signalExit
+
 }
 
 func clearBufN(buf *[]byte, n int) {
